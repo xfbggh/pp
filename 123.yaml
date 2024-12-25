@@ -1,8 +1,0 @@
-project_name: MyProject
-task_name: MyTask
-tags:
-  - example
-  - upload
-artifacts:
-  config: config.yaml
-  model: model.pkl
