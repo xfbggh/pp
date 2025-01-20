@@ -21,12 +21,18 @@ def clearml_task(project_name, task_name=None, tags=None):
                 tags=tags or []
             )
 
-            # Преобразование *args в словарь
-            args_dict = {f'arg_{i}': arg for i, arg in enumerate(args)}
+            # Логируем параметры с учетом имен
+            sig = inspect.signature(func)
+            bound_args = sig.bind(*args, **kwargs)
+            bound_args.apply_defaults()
+            params_dict = bound_args.arguments
+            task.connect(params_dict)
 
-            # Подключение аргументов к задаче
-            task.connect(args_dict)
-            task.connect(kwargs)
+            # Логирование типов данных и размеров
+            for name, value in params_dict.items():
+                task.get_logger().report_text(f'Input Parameter "{name}" Type: {type(value)}')
+                if isinstance(value, (np.ndarray, pd.DataFrame)):
+                    task.get_logger().report_text(f'Input Parameter "{name}" Shape: {value.shape}')
 
             try:
                 result = func(*args, **kwargs)
@@ -36,16 +42,57 @@ def clearml_task(project_name, task_name=None, tags=None):
                     value=1,
                     iteration=0
                 )
+                # Логирование типа данных и формы результата
+                task.get_logger().report_text(f'Result Type: {type(result)}')
+                if isinstance(result, (np.ndarray, pd.DataFrame)):
+                    task.get_logger().report_text(f'Result Shape: {result.shape}')
 
                 task.upload_artifact(name='processed_data', artifact_object=result)
 
-                fig, ax = plt.subplots()
-                ax.plot(result['score'])  # Использование значений из колонки 'score'
-                task.get_logger().report_matplotlib_figure(
-                    title='Data Plot',
-                    series='Dataset',
-                    figure=fig
-                )
+                if isinstance(result, pd.DataFrame):
+                    for col in result.select_dtypes(include=np.number).columns:
+                        fig, ax = plt.subplots(figsize=(8, 6))
+                        n, bins, patches = ax.hist(result[col], bins=30, label=col, color='#1f77b4', edgecolor='black',
+                                                   alpha=0.7)
+                        ax.set_title(f'Histogram of {col}', fontsize=14)
+                        ax.set_xlabel(col, fontsize=12)
+                        ax.set_ylabel('Frequency', fontsize=12)
+                        ax.grid(axis='y', alpha=0.7)
+                        ax.legend(fontsize=10)
+                        task.get_logger().report_matplotlib_figure(
+                            title='Histograms',
+                            series='Dataset',
+                            figure=fig
+                        )
+
+                fig, ax = plt.subplots(figsize=(8, 6))
+                if isinstance(result, pd.DataFrame) and 'score' in result.columns:
+                    ax.plot(result['score'], label='Score', color='#2ca02c')
+                    ax.set_title('Score Values Over Index', fontsize=14)
+                    ax.set_xlabel('Index', fontsize=12)
+                    ax.set_ylabel('Score', fontsize=12)
+                    ax.grid(True)
+                    ax.legend(fontsize=10)
+                    task.get_logger().report_matplotlib_figure(
+                        title='Data Plot',
+                        series='Dataset',
+                        figure=fig
+                    )
+
+                # Добавляем скаляр "rows_count"
+                if isinstance(result, pd.DataFrame):
+                    task.get_logger().report_scalar(
+                        title='Data Analysis',
+                        series='rows_count',
+                        value=len(result),
+                        iteration=kwargs.get("iteration", 0),
+                    )
+                    # Логирование таблицы в Debug Samples
+                    task.get_logger().report_table(
+                        title='Processed Data Sample',
+                        series='Data',
+                        table_plot=result.head(5)  # выводим первые 5 строк
+                    )
 
                 return result
 
@@ -75,5 +122,7 @@ def process_data(input_file, threshold=0.5, *args, **kwargs):
     return processed_data
 
 
-# Использование декоратора
-result = process_data(r'C:\Users\User\Desktop\PythonProject19\dataset.csv', threshold=0.5)
+# Использование декоратора с разными thresholds
+thresholds = np.arange(0.1, 1.0, 0.2)
+for i, threshold in enumerate(thresholds):
+    result = process_data(r'C:\Users\User\Desktop\PythonProject19\dataset.csv', threshold=threshold, iteration=i)
